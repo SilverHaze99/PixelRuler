@@ -415,7 +415,7 @@ def save_image():
         default_name = f"{os.path.splitext(os.path.basename(current_image_path))[0]}_annotated.png"
         file_path = filedialog.asksaveasfilename(
             defaultextension='.png', 
-            initialvalue=default_name,
+            initialname=default_name,
             filetypes=[('PNG', '*.png'), ('JPEG', '*.jpg')]
         )
         if file_path:
@@ -435,7 +435,7 @@ def export_measurements():
     default_name = f"{os.path.splitext(os.path.basename(current_image_path))[0]}_measurements.csv"
     file_path = filedialog.asksaveasfilename(
         defaultextension='.csv',
-        initialvalue=default_name,
+        initialname=default_name,
         filetypes=[('CSV', '*.csv')]
     )
     
