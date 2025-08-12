@@ -2,6 +2,8 @@
 
 **PixelRuler** is a specialized computer vision tool designed for Open Source Intelligence (OSINT) analysts to perform precise measurements on digital images. The tool enables analysts to measure objects in images using known reference objects or collect pixel-based measurements for later scaling.
 
+![Sample](/Sample.png)
+
 ## Purpose
 
 PixelRuler solves a common OSINT challenge: determining the real-world size of objects in images. By using reference objects of known dimensions, analysts can:
