@@ -26,6 +26,14 @@ current_mouse_x = 0
 current_mouse_y = 0
 current_image_path = ""
 
+# Performance optimization variables
+last_update_time = 0
+update_interval = 16  # ~60 FPS limit (16ms)
+needs_redraw = True
+cached_scaled_image = None
+cached_zoom = 0
+cached_image_hash = 0
+
 # Reference object database (expandable)
 REFERENCE_OBJECTS = {
     "iPhone 14": {"length": 147.5, "width": 71.5, "unit": "mm"},
@@ -42,6 +50,8 @@ REFERENCE_OBJECTS = {
 def load_image():
     """Load an image and initialize display."""
     global image, original_image, image_display, zoom_factor, offset_x, offset_y, current_image_path, points, measurements
+    global cached_scaled_image, cached_zoom, cached_image_hash, needs_redraw
+    
     root = tk.Tk()
     root.withdraw()
     file_path = filedialog.askopenfilename(
@@ -64,6 +74,12 @@ def load_image():
         offset_y = 0
         points = []
         measurements = []
+        
+        # Reset cache
+        cached_scaled_image = None
+        cached_zoom = 0
+        cached_image_hash = hash(image.tobytes())
+        needs_redraw = True
         
         # Load existing measurements if available
         load_measurements()
@@ -137,6 +153,7 @@ def select_reference_object():
 def mouse_callback(event, x, y, flags, param):
     """Handle mouse events for points, panning and zooming."""
     global points, image_display, panning, last_mouse_x, last_mouse_y, offset_x, offset_y, zoom_factor, current_mouse_x, current_mouse_y
+    global needs_redraw
     
     if image is None:
         return
@@ -159,6 +176,7 @@ def mouse_callback(event, x, y, flags, param):
                 # Remove the last two points if user doesn't want to save
                 points.pop()
                 points.pop()
+                needs_redraw = True
                 update_display()
                 return
             
@@ -203,6 +221,7 @@ def mouse_callback(event, x, y, flags, param):
             
             save_measurements()
         
+        needs_redraw = True
         update_display()
     
     elif event == cv2.EVENT_LBUTTONDOWN and (flags & cv2.EVENT_FLAG_CTRLKEY):
@@ -211,16 +230,22 @@ def mouse_callback(event, x, y, flags, param):
         last_mouse_y = y
     
     elif event == cv2.EVENT_MOUSEMOVE and panning and (flags & cv2.EVENT_FLAG_CTRLKEY):
+        # Optimierung: Nur bei größeren Bewegungen neu zeichnen
         dx = x - last_mouse_x
         dy = y - last_mouse_y
-        last_mouse_x = x
-        last_mouse_y = y
-        offset_x += dx
-        offset_y += dy
-        update_display()
+        
+        if abs(dx) > 2 or abs(dy) > 2:  # Mindestbewegung für Update
+            last_mouse_x = x
+            last_mouse_y = y
+            offset_x += dx
+            offset_y += dy
+            needs_redraw = True
+            update_display_throttled()
     
     elif event == cv2.EVENT_LBUTTONUP:
         panning = False
+        if needs_redraw:
+            update_display()
     
     elif event == cv2.EVENT_MOUSEWHEEL and (flags & cv2.EVENT_FLAG_CTRLKEY):
         old_zoom_factor = zoom_factor
@@ -233,32 +258,64 @@ def mouse_callback(event, x, y, flags, param):
         factor = zoom_factor / old_zoom_factor
         offset_x = current_mouse_x - (current_mouse_x - offset_x) * factor
         offset_y = current_mouse_y - (current_mouse_y - offset_y) * factor
+        needs_redraw = True
         update_display()
+
+def update_display_throttled():
+    """Throttled version of update_display for smooth panning."""
+    global last_update_time
+    import time
+    current_time = time.time() * 1000  # Convert to milliseconds
+    
+    if current_time - last_update_time > update_interval:
+        update_display()
+        last_update_time = current_time
+
+def get_cached_scaled_image():
+    """Get cached scaled image or create new one if needed."""
+    global cached_scaled_image, cached_zoom, image, zoom_factor
+    
+    if cached_scaled_image is None or abs(cached_zoom - zoom_factor) > 0.01:
+        if image is None:
+            return None
+            
+        # Scale the image
+        scaled_width = int(image.shape[1] * zoom_factor)
+        scaled_height = int(image.shape[0] * zoom_factor)
+        
+        if scaled_width <= 0 or scaled_height <= 0:
+            return None
+            
+        # Choose interpolation based on zoom level for better performance/quality trade-off
+        if zoom_factor < 1.0:
+            interpolation = cv2.INTER_AREA  # Better for downsampling
+        else:
+            interpolation = cv2.INTER_LINEAR  # Faster for upsampling
+            
+        cached_scaled_image = cv2.resize(image, (scaled_width, scaled_height), interpolation=interpolation)
+        cached_zoom = zoom_factor
+    
+    return cached_scaled_image
 
 def update_display():
     """Update image display with zoom, panning and measurements."""
-    global image_display
-    if image is None:
+    global image_display, needs_redraw
+    if image is None or not needs_redraw:
         return
         
     disp_height, disp_width = image.shape[:2]
     image_display = np.zeros_like(image)
     
-    # Scale the image
-    scaled_width = int(image.shape[1] * zoom_factor)
-    scaled_height = int(image.shape[0] * zoom_factor)
-    
-    if scaled_width <= 0 or scaled_height <= 0:
+    scaled_image = get_cached_scaled_image()
+    if scaled_image is None:
         cv2.imshow(window_name, image_display)
         return
 
-    scaled_image = cv2.resize(image, (scaled_width, scaled_height), interpolation=cv2.INTER_LINEAR)
-    
     # Calculate visible area
     x_start = int(offset_x)
     y_start = int(offset_y)
-    x_end = min(disp_width, x_start + scaled_width)
-    y_end = min(disp_height, y_start + scaled_height)
+    x_end = min(disp_width, x_start + scaled_image.shape[1])
+    y_end = min(disp_height, y_start + scaled_image.shape[0])
     
     src_x_start = max(0, -x_start)
     src_y_start = max(0, -y_start)
@@ -279,27 +336,44 @@ def update_display():
 
     # Draw measurements
     if show_measurements:
-        for i, measurement in enumerate(measurements):
-            start_x, start_y = to_screen_coords(measurement["start"]["x"], measurement["start"]["y"])
-            end_x, end_y = to_screen_coords(measurement["end"]["x"], measurement["end"]["y"])
-            
-            start_x = max(0, min(int(start_x), disp_width - 1))
-            start_y = max(0, min(int(start_y), disp_height - 1))
-            end_x = max(0, min(int(end_x), disp_width - 1))
-            end_y = max(0, min(int(end_y), disp_height - 1))
-            
-            # Different colors for different measurements
-            colors = [(0, 255, 0), (255, 0, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
-            color = colors[i % len(colors)]
-            
-            # Draw line
-            cv2.line(image_display, (start_x, start_y), (end_x, end_y), color, max(1, int(2 * zoom_factor)))
-            
-            # Mark endpoints
-            cv2.circle(image_display, (start_x, start_y), max(2, int(3 * zoom_factor)), color, -1)
-            cv2.circle(image_display, (end_x, end_y), max(2, int(3 * zoom_factor)), color, -1)
-            
-            # Display text
+        draw_measurements()
+    
+    # Draw info text
+    draw_info_text()
+    
+    cv2.imshow(window_name, image_display)
+    needs_redraw = False
+
+def draw_measurements():
+    """Draw measurements on the display (separated for better performance)."""
+    global image_display
+    
+    disp_height, disp_width = image_display.shape[:2]
+    
+    for i, measurement in enumerate(measurements):
+        start_x, start_y = to_screen_coords(measurement["start"]["x"], measurement["start"]["y"])
+        end_x, end_y = to_screen_coords(measurement["end"]["x"], measurement["end"]["y"])
+        
+        start_x = max(0, min(int(start_x), disp_width - 1))
+        start_y = max(0, min(int(start_y), disp_height - 1))
+        end_x = max(0, min(int(end_x), disp_width - 1))
+        end_y = max(0, min(int(end_y), disp_height - 1))
+        
+        # Different colors for different measurements
+        colors = [(0, 255, 0), (255, 0, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
+        color = colors[i % len(colors)]
+        
+        # Draw line
+        line_thickness = max(1, int(2 * zoom_factor))
+        cv2.line(image_display, (start_x, start_y), (end_x, end_y), color, line_thickness)
+        
+        # Mark endpoints
+        circle_radius = max(2, int(3 * zoom_factor))
+        cv2.circle(image_display, (start_x, start_y), circle_radius, color, -1)
+        cv2.circle(image_display, (end_x, end_y), circle_radius, color, -1)
+        
+        # Display text (only if zoom is sufficient for readability)
+        if zoom_factor > 0.3:
             mid_x = (start_x + end_x) // 2
             mid_y = (start_y + end_y) // 2
             
@@ -315,18 +389,18 @@ def update_display():
                 text_y = mid_y - 10 + j * 15
                 cv2.putText(image_display, text, (mid_x, text_y), 
                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
-    
-    # Info text in corner
+
+def draw_info_text():
+    """Draw info text in corner."""
     info_text = [
         f"Zoom: {zoom_factor:.2f}x",
-        f"Measurements: {len(measurements)}"
+        f"Measurements: {len(measurements)}",
+        f"CPU Opt: ON"
     ]
     
     for i, text in enumerate(info_text):
         cv2.putText(image_display, text, (10, 20 + i * 20), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-    
-    cv2.imshow(window_name, image_display)
 
 def get_save_path():
     """Generate file path for measurements based on image name."""
@@ -354,32 +428,35 @@ def save_measurements():
 
 def load_measurements():
     """Load measurements from JSON file."""
-    global measurements
+    global measurements, needs_redraw
     filename = get_save_path()
     if os.path.exists(filename):
         try:
             with open(filename, "r", encoding="utf-8") as f:
                 data = json.load(f)
             measurements = data.get("measurements", [])
+            needs_redraw = True
             print(f"Measurements loaded: {len(measurements)} entries")
         except Exception as e:
             print(f"Error loading measurements: {e}")
 
 def toggle_measurements():
     """Toggle measurement display on/off."""
-    global show_measurements
+    global show_measurements, needs_redraw
     show_measurements = not show_measurements
+    needs_redraw = True
     update_display()
     print(f"Measurements {'shown' if show_measurements else 'hidden'}")
 
 def delete_last_measurement():
     """Delete the last measurement."""
-    global measurements, points
+    global measurements, points, needs_redraw
     if measurements:
         deleted = measurements.pop()
         if len(points) >= 2:
             points.pop()
             points.pop()
+        needs_redraw = True
         update_display()
         save_measurements()
         print(f"Measurement #{deleted['id']} deleted.")
@@ -465,10 +542,13 @@ def export_measurements():
 
 def reset_view():
     """Reset zoom and position."""
-    global zoom_factor, offset_x, offset_y
+    global zoom_factor, offset_x, offset_y, needs_redraw, cached_scaled_image, cached_zoom
     zoom_factor = 1.0
     offset_x = 0
     offset_y = 0
+    cached_scaled_image = None
+    cached_zoom = 0
+    needs_redraw = True
     update_display()
     print("View reset.")
 
@@ -478,7 +558,7 @@ def main():
     cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
     cv2.setMouseCallback(window_name, mouse_callback)
 
-    print("=== OSINT Measurement Tool ===")
+    print("=== OSINT Measurement Tool (CPU Optimized) ===")
     print("\nControls:")
     print("  'l': Load image")
     print("  Left click: Set measurement points (2 points = 1 measurement)")
@@ -491,6 +571,11 @@ def main():
     print("  'e': Export measurements as CSV")
     print("  'r': Reset view")
     print("  'q': Quit program")
+    print("\nPerformance optimizations:")
+    print("  - Cached image scaling")
+    print("  - Throttled updates during panning")
+    print("  - Adaptive interpolation methods")
+    print("  - Reduced unnecessary redraws")
     print("\nAvailable reference objects:")
     for obj in REFERENCE_OBJECTS.keys():
         if obj != "Custom":
