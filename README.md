@@ -29,7 +29,7 @@ PixelRuler solves a common OSINT challenge: determining the real-world size of o
 - Python 3.7+
 - OpenCV (cv2)
 - NumPy
-- PySide9 
+- PySide6
 
 ### Setup
 
