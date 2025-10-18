@@ -29,7 +29,7 @@ PixelRuler solves a common OSINT challenge: determining the real-world size of o
 - Python 3.7+
 - OpenCV (cv2)
 - NumPy
-- Tkinter (usually included with Python)
+- PySide9 
 
 ### Setup
 
@@ -53,7 +53,7 @@ PixelRuler solves a common OSINT challenge: determining the real-world size of o
         ```
 4.  **Install Required Python Libraries:** Install the necessary libraries using pip within the activated virtual environment:
 ```bash
-pip install opencv-python numpy
+pip install opencv-python numpy PySide6
 ```
 5.  **Run the tool**
 ```bash   
@@ -63,25 +63,18 @@ python pixelruler.py
 ## Usage
 
 ### Basic Controls
-- **'l'**: Load image
+- **Spacebar + Drag**: Pan image
 - **Left Click**: Set measurement points (2 points = 1 measurement)
-- **Ctrl + Mouse Wheel**: Zoom in/out around cursor
-- **Ctrl + Left Click + Drag**: Pan image
-- **'t'**: Toggle measurement visibility
-- **'d'**: Delete last measurement
-- **'m'**: Show measurement list in console
-- **'s'**: Save annotated image
-- **'e'**: Export measurements to CSV
-- **'r'**: Reset view (zoom & position)
-- **'q'**: Quit application
+- **Mouse Wheel**: Zoom in/out around cursor
+- **Ctrl + Z**: Undo
+- **Ctrl + Z**: Redo
 
 ### Measurement Workflow
 
-1. **Load Image** - Press 'l' and select your image file
+1. **Load Image** - Press the Folder Icon and select your image file
 2. **Set Points** - Click two points to create a measurement line
-3. **Save Decision** - Choose whether to save this measurement
-4. **Reference Object** - Optionally select a reference object for real-world scaling
-5. **Repeat** - Continue measuring other objects
+3. **Reference Object** - Optionally select a reference object for real-world scaling
+4. **Repeat** - Continue measuring other objects
 
 ### Reference Objects Database
 
@@ -134,7 +127,7 @@ your_image_measurements.csv      # Exported data (optional)
 }
 ```
 
-## 🔗 OSINT Measurement Chains
+## OSINT Measurement Chains
 
 PixelRuler enables analysts to build measurement chains across multiple images:
 
@@ -253,6 +246,8 @@ Edit the `REFERENCE_OBJECTS` dictionary in the source code:
 This tool is provided as-is for OSINT research and analysis purposes. Users are responsible for ensuring compliance with applicable laws and regulations in their jurisdiction.
 This tool is provided under the MIT-License
 
+Icons used are Provided by "lucide" (lucide-license)[https://github.com/lucide-icons/lucide/blob/main/LICENSE]
+
 ## Technical Details
 
 ### System Requirements
@@ -265,7 +260,7 @@ This tool is provided under the MIT-License
 - **Output**: PNG (annotated images), JSON (measurements), CSV (data export)
 
 ### Performance Notes
-- Images over 4K resolution may require more RAM
+- Images over 4K resolution may require more RAM and CPU
 - Zoom operations are optimized for smooth performance
 - Measurement data files are typically <1MB per image
 
@@ -273,4 +268,4 @@ This tool is provided under the MIT-License
 
 **PixelRuler** - Precision measurement for the digital investigator.
 
-*Version 1.0*
+*Version 2.0*
