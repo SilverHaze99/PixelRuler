@@ -1025,6 +1025,6 @@ def main():
     window.show()
     sys.exit(app.exec())
 
-
+# Forgot to write everything into the commit log... so lets try again
 if __name__ == "__main__":
     main()
