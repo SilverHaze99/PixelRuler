@@ -19,11 +19,9 @@ from PySide6.QtGui import (
     QMouseEvent, QAction, QIcon, QFont, QPaintEvent, QCloseEvent, QKeySequence, QKeyEvent
 )
 
-# Globale Variable für den Asset-Pfad
 ASSETS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
-
-# Reference object database (bleibt unverändert)
+# Reference object database
 REFERENCE_OBJECTS = {
     "iPhone 14": {"length": 147.5, "width": 71.5, "unit": "mm"},
     "iPhone 15": {"length": 147.6, "width": 71.6, "unit": "mm"},
@@ -36,9 +34,7 @@ REFERENCE_OBJECTS = {
     "Custom": {"length": 0, "width": 0, "unit": "mm"}
 }
 
-
 class ReferenceObjectDialog(QDialog):
-    # (Dieser Code bleibt unverändert)
     """Dialog for selecting or creating a reference object."""
     
     def __init__(self, parent=None):
@@ -47,23 +43,33 @@ class ReferenceObjectDialog(QDialog):
         self.setMinimumWidth(400)
         self.reference_object = None
         
-        # Dark theme styling for the dialog
+        # Dark theme 
         self.setStyleSheet("""
             QDialog {
-                background-color: #353535;
+                background-color: #121212;
             }
             QLabel {
                 color: white;
+                background-color: transparent;
+                border: none;
+                padding-top: 6px; 
+            }
+            QComboBox, QLineEdit, QDoubleSpinBox {
+                background-color: transparent;
+                color: white;
+                border: none;
+                border-bottom: 1px solid #00bcd4;
+                padding: 6px;
+            }
+            QComboBox:hover, QLineEdit:hover, QDoubleSpinBox:hover {
+                background-color: #121212;
+            }
+            QComboBox:focus, QLineEdit:focus, QDoubleSpinBox:focus {
+                border-bottom: 2px solid #00bcd4;
+                background-color: #121212;
             }
             QComboBox {
-                background-color: #2a2a2a;
-                color: white;
-                border: 1px solid #555;
-                padding: 5px;
                 border-radius: 3px;
-            }
-            QComboBox:hover {
-                border: 1px solid #2a82da;
             }
             QComboBox::drop-down {
                 border: none;
@@ -75,47 +81,28 @@ class ReferenceObjectDialog(QDialog):
                 border-top: 5px solid white;
                 margin-right: 5px;
             }
+
             QComboBox QAbstractItemView {
-                background-color: #2a2a2a;
+                background-color: transparent;
                 color: white;
-                selection-background-color: #2a82da;
-                border: 1px solid #555;
-            }
-            QLineEdit {
-                background-color: #2a2a2a;
-                color: white;
-                border: 1px solid #555;
-                padding: 5px;
-                border-radius: 3px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #2a82da;
-            }
-            QDoubleSpinBox {
-                background-color: #2a2a2a;
-                color: white;
-                border: 1px solid #555;
-                padding: 5px;
-                border-radius: 3px;
-            }
-            QDoubleSpinBox:focus {
-                border: 1px solid #2a82da;
+                selection-background-color: #00bcd4;
+                border: 1px solid #00bcd4;
             }
             QPushButton {
-                background-color: #2a2a2a;
+                background-color: #2e2e2e;
                 color: white;
                 border: 1px solid #555;
                 padding: 5px 15px;
                 border-radius: 3px;
             }
             QPushButton:hover {
-                background-color: #3a3a3a;
-                border: 1px solid #2a82da;
+                background-color: #3e3e3e;
+                border: 1px solid #00bcd4;
             }
             QPushButton:pressed {
-                background-color: #1a1a1a;
+                background-color: #1e1e1e;
             }
-        """)
+        """) # better then before but still needs work; down-arrow maybe image but its secondary cause not that important right now
         
         self.init_ui()
     
@@ -134,7 +121,7 @@ class ReferenceObjectDialog(QDialog):
         custom_layout = QFormLayout(self.custom_widget)
         
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Enter custom object name")
+        self.name_input.setPlaceholderText("Enter custom object name") # ToDo: This still has the weird boxes but its the QLineEdit i think
         self.length_input = QDoubleSpinBox()
         self.length_input.setRange(0.01, 10000)
         self.length_input.setSuffix(" mm")
@@ -184,29 +171,29 @@ class ReferenceObjectDialog(QDialog):
 
 
 class ImageCanvas(QLabel):
-    """Custom canvas widget for image display and interaction."""
+    """Highly optimized canvas with image caching, throttled updates, and smooth zoom previews."""
     
     mouse_moved = Signal(int, int, int, int)
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumSize(800, 600)
-        self.setStyleSheet("background-color: #2b2b2b; border: 1px solid #555;")
-        
-        # --- FIX START: Fokus-Policy setzen, damit das Widget Tastendrücke empfängt ---
+        self.setStyleSheet("background-color: #121212; border: 1px solid #555;") # Background when no IMG is loaded
         self.setFocusPolicy(Qt.StrongFocus)
-        # --- FIX ENDE ---
         
         self.cv_image = None
-        self.display_pixmap = None
+        self.scaled_pixmap = QPixmap()
+        self.overlay_pixmap = QPixmap()
         
+        self.is_preview_zooming = False
+        self.cached_zoom_factor = 1.0
+
         self.zoom_factor = 1.0
         self.min_zoom = 0.1
         self.max_zoom = 10.0
         self.offset = QPointF(0.0, 0.0)
         self.pan_start = None
         self.mode = "measure"
-        
         self.space_pan_active = False
         
         self.points: List[Tuple[float, float]] = []
@@ -215,27 +202,40 @@ class ImageCanvas(QLabel):
         
         self.setMouseTracking(True)
         self.current_mouse_pos = QPoint(0, 0)
-        
         self.setCursor(Qt.CrossCursor)
-    
-    # --- FIX START: Tastendrücke direkt im Canvas verarbeiten ---
+
+        self.zoom_end_timer = QTimer(self)
+        self.zoom_end_timer.setSingleShot(True)
+        self.zoom_end_timer.timeout.connect(self.finalize_zoom)
+
+        self.repaint_timer = QTimer(self)
+        self.repaint_timer.setInterval(16) # ~60 FPS
+        self.repaint_timer.timeout.connect(self.throttled_update)
+        self.repaint_timer.start()
+        self.needs_repaint = False
+
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Space and not event.isAutoRepeat():
             self.space_pan_active = True
             self.setCursor(Qt.OpenHandCursor)
-            self.update() # Um z.B. die Live-Linie auszublenden
+            self.needs_repaint = True
         else:
             super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Space and not event.isAutoRepeat():
             self.space_pan_active = False
-            self.pan_start = None # Wichtig, um das Ziehen zu beenden
-            self.set_mode(self.mode) # Setzt den Cursor auf den des aktuellen Werkzeugs zurück
-            self.update() # Um z.B. die Live-Linie wieder einzublenden
+            self.pan_start = None
+            self.set_mode(self.mode)
+            self.needs_repaint = True
         else:
             super().keyReleaseEvent(event)
-    # --- FIX ENDE ---
+            
+    def throttled_update(self):
+        """Called by a 60 FPS timer to ensure smooth panning without event flooding."""
+        if self.needs_repaint:
+            self.needs_repaint = False
+            self.update()
 
     def load_image(self, file_path: str) -> bool:
         self.cv_image = cv2.imread(file_path)
@@ -244,7 +244,6 @@ class ImageCanvas(QLabel):
         self.reset_view()
         self.points = []
         self.measurements = []
-        self.update_display()
         return True
 
     def get_image_size(self) -> Optional[Tuple[int, int]]:
@@ -254,70 +253,121 @@ class ImageCanvas(QLabel):
 
     def paintEvent(self, event: QPaintEvent):
         super().paintEvent(event)
-        if not self.display_pixmap: return
-            
         painter = QPainter(self)
-        x = (self.width() - self.display_pixmap.width()) / 2 + self.offset.x()
-        y = (self.height() - self.display_pixmap.height()) / 2 + self.offset.y()
-        painter.drawPixmap(QPoint(int(x), int(y)), self.display_pixmap)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        painter.setRenderHint(QPainter.Antialiasing)  # Für glattere Linien
+        
+        if self.scaled_pixmap.isNull(): return
+        
+        if self.is_preview_zooming:
+            ratio = self.zoom_factor / self.cached_zoom_factor
+            w = int(self.scaled_pixmap.width() * ratio)
+            h = int(self.scaled_pixmap.height() * ratio)
+        else:
+            w = self.scaled_pixmap.width()
+            h = self.scaled_pixmap.height()
 
+        x = int((self.width() - w) / 2 + self.offset.x())
+        y = int((self.height() - h) / 2 + self.offset.y())
+        
+        painter.drawPixmap(x, y, w, h, self.scaled_pixmap)
+        
+        if self.show_measurements:
+            if self.is_preview_zooming:
+                painter.save()
+                painter.translate(x, y)
+                painter.scale(self.zoom_factor / self.cached_zoom_factor, 
+                             self.zoom_factor / self.cached_zoom_factor)
+                self.draw_measurements_direct(painter)
+                painter.restore()
+            else:
+                painter.drawPixmap(x, y, self.overlay_pixmap)
+        
+        
         if len(self.points) % 2 == 1 and self.mode == "measure" and not self.space_pan_active:
             start_point_img = self.points[-1]
-            start_point_pixmap = self.to_screen_coords(start_point_img[0], start_point_img[1])
-            start_x_widget = x + start_point_pixmap[0]
-            start_y_widget = y + start_point_pixmap[1]
-            
-            end_point_widget = self.current_mouse_pos
-            
+            start_x_pix, start_y_pix = self.to_screen_coords(start_point_img[0], start_point_img[1])
             pen = QPen(QColor("yellow"), 1, Qt.DashLine)
             painter.setPen(pen)
-            painter.drawLine(int(start_x_widget), int(start_y_widget), end_point_widget.x(), end_point_widget.y())
+            painter.drawLine(x + start_x_pix, y + start_y_pix, 
+                           self.current_mouse_pos.x(), self.current_mouse_pos.y())
+
+    def draw_measurements_direct(self, painter: QPainter):
+        """Zeichnet Messungen direkt auf den Painter - schnelle Version für Zoom-Preview."""
+        colors = [
+            QColor(0, 255, 0), QColor(255, 0, 0), QColor(0, 0, 255),
+            QColor(255, 255, 0), QColor(255, 0, 255), QColor(0, 255, 255)
+        ]
+        
+        # Verwende cached_zoom_factor für die Koordinaten, da wir bereits skaliert haben
+        for i, m in enumerate(self.measurements):
+            color = colors[i % len(colors)]
+            pen = QPen(color, max(2, int(2 * self.cached_zoom_factor)))
+            painter.setPen(pen)
+            
+            start_x = int(m["start"]["x"] * self.cached_zoom_factor)
+            start_y = int(m["start"]["y"] * self.cached_zoom_factor)
+            end_x = int(m["end"]["x"] * self.cached_zoom_factor)
+            end_y = int(m["end"]["y"] * self.cached_zoom_factor)
+            
+            painter.drawLine(start_x, start_y, end_x, end_y)
+            
+            radius = max(3, int(4 * self.cached_zoom_factor))
+            painter.setBrush(color)
+            painter.drawEllipse(QPoint(start_x, start_y), radius, radius)
+            painter.drawEllipse(QPoint(end_x, end_y), radius, radius)
 
     def to_image_coords(self, screen_pos: QPointF) -> Tuple[float, float]:
-        if self.cv_image is None or self.display_pixmap is None: return (0, 0)
+        if self.cv_image is None: return (0, 0)
         
-        pixmap_origin_x = (self.width() - self.display_pixmap.width()) / 2 + self.offset.x()
-        pixmap_origin_y = (self.height() - self.display_pixmap.height()) / 2 + self.offset.y()
+        pixmap_width = self.cv_image.shape[1] * self.zoom_factor
+        pixmap_height = self.cv_image.shape[0] * self.zoom_factor
+        pixmap_origin_x = (self.width() - pixmap_width) / 2 + self.offset.x()
+        pixmap_origin_y = (self.height() - pixmap_height) / 2 + self.offset.y()
         
         img_x = (screen_pos.x() - pixmap_origin_x) / self.zoom_factor
         img_y = (screen_pos.y() - pixmap_origin_y) / self.zoom_factor
         
-        img_x = max(0, min(img_x, self.cv_image.shape[1]))
-        img_y = max(0, min(img_y, self.cv_image.shape[0]))
-        
-        return (img_x, img_y)
+        return max(0, min(img_x, self.cv_image.shape[1])), max(0, min(img_y, self.cv_image.shape[0]))
 
     def to_screen_coords(self, img_x: float, img_y: float) -> Tuple[int, int]:
-        if self.cv_image is None: return (0, 0)
-        return (int(img_x * self.zoom_factor), int(img_y * self.zoom_factor))
+        return int(img_x * self.zoom_factor), int(img_y * self.zoom_factor)
     
-    def update_display(self):
+    def generate_scaled_pixmap(self):
+        """CPU-intensive function to create the high-quality scaled background."""
         if self.cv_image is None: return
+        
+        self.cached_zoom_factor = self.zoom_factor
         
         scaled_width = int(self.cv_image.shape[1] * self.zoom_factor)
         scaled_height = int(self.cv_image.shape[0] * self.zoom_factor)
-        
         if scaled_width <= 0 or scaled_height <= 0: return
         
         interpolation = cv2.INTER_AREA if self.zoom_factor < 1.0 else cv2.INTER_LINEAR
         scaled_image = cv2.resize(self.cv_image, (scaled_width, scaled_height), interpolation=interpolation)
         
         height, width, channel = scaled_image.shape
-        bytes_per_line = 3 * width
-        rgb_image = cv2.cvtColor(scaled_image, cv2.COLOR_BGR2RGB)
-        q_image = QImage(rgb_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(q_image)
+        q_image = QImage(cv2.cvtColor(scaled_image, cv2.COLOR_BGR2RGB).data, width, height, 3 * width, QImage.Format_RGB888)
+        self.scaled_pixmap = QPixmap.fromImage(q_image)
         
-        if self.show_measurements:
-            painter = QPainter(pixmap)
-            self.draw_measurements(painter)
-            painter.end()
+        self.update_overlay()
+
+    def update_overlay(self):
+        """Fast function to redraw only the measurement overlay."""
+        if self.scaled_pixmap.isNull(): return
         
-        self.display_pixmap = pixmap
-        self.update()
+        self.overlay_pixmap = QPixmap(self.scaled_pixmap.size())
+        self.overlay_pixmap.fill(Qt.transparent)
+        
+        painter = QPainter(self.overlay_pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        self.draw_measurements(painter)
+        painter.end()
+
+        self.needs_repaint = True
 
     def draw_measurements(self, painter: QPainter):
-        # (Dieser Code bleibt unverändert)
+        """High-quality measurement drawing für das Overlay."""
         colors = [
             QColor(0, 255, 0), QColor(255, 0, 0), QColor(0, 0, 255),
             QColor(255, 255, 0), QColor(255, 0, 255), QColor(0, 255, 255)
@@ -352,14 +402,12 @@ class ImageCanvas(QLabel):
 
         if self.space_pan_active and event.button() == Qt.LeftButton:
             self.pan_start = event.position()
-            # --- FIX: Korrekter Cursor-Name ---
             self.setCursor(Qt.ClosedHandCursor)
             return
 
         if self.mode == "pan" or event.button() == Qt.MiddleButton:
             if event.button() == Qt.LeftButton or event.button() == Qt.MiddleButton:
                 self.pan_start = event.position()
-                # --- FIX: Korrekter Cursor-Name ---
                 self.setCursor(Qt.ClosedHandCursor)
                 return
 
@@ -378,10 +426,9 @@ class ImageCanvas(QLabel):
                 }
                 self.handle_new_measurement(measurement)
             
-            self.update()
+            self.needs_repaint = True
 
     def handle_new_measurement(self, measurement: Dict):
-        # (Dieser Code bleibt unverändert)
         main_window = self.window()
         if not isinstance(main_window, PixelRulerMainWindow): return
 
@@ -390,7 +437,17 @@ class ImageCanvas(QLabel):
         msg_box.setText("Is this measurement a reference object?")
         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg_box.setDefaultButton(QMessageBox.No)
-        msg_box.setStyleSheet("QMessageBox { background-color: #353535; } QMessageBox QLabel { color: white; } QPushButton { background-color: #2a2a2a; color: white; border: 1px solid #555; padding: 5px 15px; border-radius: 3px; } QPushButton:hover { background-color: #3a3a3a; border: 1px solid #2a82da; }")
+        msg_box.setStyleSheet("""
+            QMessageBox { background-color: #121212; }
+            QMessageBox QLabel { 
+                color: white; 
+                background-color: transparent; 
+                border: none; 
+            }
+            QPushButton { background-color: #2a2a2a; color: white; border: 1px solid #555; padding: 5px 15px; border-radius: 3px; }
+            QPushButton:hover { background-color: #3a3a3a; border: 1px solid #00bcd4; }
+            QPushButton:pressed { background-color: #1a1a1a; }
+        """)
         
         reply = msg_box.exec()
 
@@ -401,7 +458,7 @@ class ImageCanvas(QLabel):
                 ref_obj = dialog.get_reference_object()
             else:
                 if len(self.points) >= 2: self.points.pop(); self.points.pop()
-                self.update()
+                self.needs_repaint = True
                 main_window.status_bar.showMessage("Measurement cancelled.")
                 return
 
@@ -427,45 +484,57 @@ class ImageCanvas(QLabel):
             delta = event.position() - self.pan_start
             self.offset += delta
             self.pan_start = event.position()
-            self.update()
+            self.needs_repaint = True
         
         if self.mode == "measure" and len(self.points) % 2 == 1:
-            self.update()
+            self.needs_repaint = True
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self.pan_start is not None:
             if self.space_pan_active or self.mode == 'pan':
                 self.setCursor(Qt.OpenHandCursor)
         self.pan_start = None
-        self.update()
+        self.needs_repaint = True
     
     def wheelEvent(self, event: QWheelEvent):
-        # (Dieser Code bleibt unverändert)
+        """Highly optimized wheel event with smooth visual preview."""
         if self.cv_image is None: return
+
+        angle = event.angleDelta().y()
+        if (angle > 0 and self.zoom_factor >= self.max_zoom) or \
+           (angle < 0 and self.zoom_factor <= self.min_zoom):
+            return
 
         mouse_pos = event.position()
         img_coord_before_zoom = self.to_image_coords(mouse_pos)
 
-        if event.angleDelta().y() > 0: self.zoom_factor *= 1.15
-        else: self.zoom_factor /= 1.15
+        if angle > 0: self.zoom_factor *= 1.1
+        else: self.zoom_factor /= 1.1
         self.zoom_factor = max(self.min_zoom, min(self.zoom_factor, self.max_zoom))
-
+        
         new_pixmap_width = self.cv_image.shape[1] * self.zoom_factor
         new_pixmap_height = self.cv_image.shape[0] * self.zoom_factor
         center_x = (self.width() - new_pixmap_width) / 2
         center_y = (self.height() - new_pixmap_height) / 2
         
-        new_offset_x = mouse_pos.x() - center_x - (img_coord_before_zoom[0] * self.zoom_factor)
-        new_offset_y = mouse_pos.y() - center_y - (img_coord_before_zoom[1] * self.zoom_factor)
-        self.offset = QPointF(new_offset_x, new_offset_y)
+        self.offset.setX(mouse_pos.x() - center_x - (img_coord_before_zoom[0] * self.zoom_factor))
+        self.offset.setY(mouse_pos.y() - center_y - (img_coord_before_zoom[1] * self.zoom_factor))
+        
+        self.is_preview_zooming = True
+        
+        self.needs_repaint = True
+        self.zoom_end_timer.start(150)
+        
+    def finalize_zoom(self):
+        """Called by timer to render high-quality image after zoom is finished."""
+        self.is_preview_zooming = False
+        self.generate_scaled_pixmap()
 
-        self.update_display()
-    
     def delete_last_measurement(self):
         if self.measurements:
             deleted_measurement = self.measurements.pop()
             if len(self.points) >= 2: self.points.pop(); self.points.pop()
-            self.update_display()
+            self.update_overlay()
             return deleted_measurement
         return None
     
@@ -473,17 +542,17 @@ class ImageCanvas(QLabel):
         old_measurements = self.measurements[:]
         self.measurements = []
         self.points = []
-        self.update_display()
+        self.update_overlay()
         return old_measurements
     
     def toggle_measurements(self):
         self.show_measurements = not self.show_measurements
-        self.update_display()
+        self.needs_repaint = True
     
     def reset_view(self):
         self.zoom_factor = 1.0
         self.offset = QPointF(0, 0)
-        self.update_display()
+        self.generate_scaled_pixmap()
     
     def set_mode(self, mode: str):
         self.mode = mode
@@ -596,7 +665,6 @@ class PixelRulerMainWindow(QMainWindow):
         toolbar.addAction(toggle_meas_action)
     
     def create_right_panel(self) -> QWidget:
-        # (Dieser Code bleibt unverändert)
         panel = QWidget()
         panel.setMaximumWidth(450)
         layout = QVBoxLayout(panel)
@@ -660,8 +728,6 @@ class PixelRulerMainWindow(QMainWindow):
         layout.addStretch()
         return panel
     
-    # Der Event-Filter wird nicht mehr benötigt
-    
     def set_tool(self, tool: str):
         self.canvas.set_mode(tool)
         for action in self.tool_actions: action.setChecked(False)
@@ -680,7 +746,6 @@ class PixelRulerMainWindow(QMainWindow):
                 if size: self.image_size_label.setText(f"{size[0]}×{size[1]} px")
                 
                 self.load_measurements()
-                self.update_measurements_list()
                 self.is_dirty = False
                 self.undo_stack.clear()
                 self.redo_stack.clear()
@@ -709,7 +774,7 @@ class PixelRulerMainWindow(QMainWindow):
         self.redo_stack.clear()
         
         self.is_dirty = True
-        self.update_all_views()
+        self.update_all_views(update_base_image=False)
         self.status_bar.showMessage(f"Measurement #{measurement['id']} added.")
 
     def delete_last_measurement(self):
@@ -718,7 +783,7 @@ class PixelRulerMainWindow(QMainWindow):
             self.undo_stack.append(('delete', deleted_measurement))
             self.redo_stack.clear()
             self.is_dirty = True
-            self.update_all_views()
+            self.update_all_views(update_base_image=False)
             self.status_bar.showMessage("Last measurement deleted.")
         else:
             QMessageBox.information(self, "Info", "No measurements to delete.")
@@ -736,11 +801,10 @@ class PixelRulerMainWindow(QMainWindow):
                 self.undo_stack.append(('clear', old_measurements))
                 self.redo_stack.clear()
                 self.is_dirty = True
-                self.update_all_views()
+                self.update_all_views(update_base_image=False)
                 self.status_bar.showMessage("All measurements cleared.")
 
     def undo(self):
-        # (Dieser Code bleibt unverändert)
         if not self.undo_stack: return
         
         action, data = self.undo_stack.pop()
@@ -756,17 +820,15 @@ class PixelRulerMainWindow(QMainWindow):
             self.redo_stack.append(('delete', data))
         elif action == 'clear':
             self.canvas.measurements.extend(data)
-            # Wiederherstellen der Punkte ist hier vereinfacht
             for m in data:
                 self.canvas.points.append((m['start']['x'], m['start']['y']))
                 self.canvas.points.append((m['end']['x'], m['end']['y']))
             self.redo_stack.append(('clear', data))
 
         self.is_dirty = True
-        self.update_all_views()
+        self.update_all_views(update_base_image=False)
         
     def redo(self):
-        # (Dieser Code bleibt unverändert)
         if not self.redo_stack: return
         
         action, data = self.redo_stack.pop()
@@ -779,8 +841,6 @@ class PixelRulerMainWindow(QMainWindow):
         elif action == 'delete':
             try:
                 self.canvas.measurements.remove(data)
-                # Das Entfernen der Punkte ist tricky, wenn die Reihenfolge nicht garantiert ist
-                # Diese simple Implementierung geht davon aus, dass es die letzten waren.
                 if self.canvas.points: self.canvas.points.pop(); self.canvas.points.pop()
                 self.undo_stack.append(('delete', data))
             except ValueError:
@@ -791,12 +851,15 @@ class PixelRulerMainWindow(QMainWindow):
             self.undo_stack.append(('clear', old_measurements))
 
         self.is_dirty = True
-        self.update_all_views()
+        self.update_all_views(update_base_image=False)
 
-    def update_all_views(self):
-        """Helper to refresh UI after undo/redo."""
+    def update_all_views(self, update_base_image=True):
+        """Helper to refresh UI. Can skip expensive base image generation."""
         self.update_measurements_list()
-        self.canvas.update_display()
+        if update_base_image:
+            self.canvas.generate_scaled_pixmap()
+        else:
+            self.canvas.update_overlay()
         self.update_undo_redo_status()
 
     def update_undo_redo_status(self):
@@ -805,7 +868,6 @@ class PixelRulerMainWindow(QMainWindow):
         self.redo_action.setEnabled(bool(self.redo_stack))
     
     def update_measurements_list(self):
-        # (Dieser Code bleibt unverändert)
         self.measurements_list.clear()
         colors = [
             QColor(0, 255, 0), QColor(255, 0, 0), QColor(0, 0, 255),
@@ -868,7 +930,7 @@ class PixelRulerMainWindow(QMainWindow):
                     self.canvas.points.append((m['end']['x'], m['end']['y']))
                     self.canvas.measurements.append(m)
                 
-                self.canvas.update_display()
+                self.update_all_views(update_base_image=True)
                 self.status_bar.showMessage(f"Loaded {len(measurements)} measurements from file.")
                 self.is_dirty = False
             except Exception as e:
@@ -942,7 +1004,6 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     
-    # Dark theme palette (bleibt unverändert)
     from PySide6.QtGui import QPalette
     palette = QPalette()
     palette.setColor(QPalette.Window, QColor(53, 53, 53))
